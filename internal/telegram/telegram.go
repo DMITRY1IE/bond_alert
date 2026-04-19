@@ -1,0 +1,187 @@
+package telegram
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"strings"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+
+	"bond_alert_gin/internal/app"
+	"bond_alert_gin/internal/moex"
+	"bond_alert_gin/internal/validator"
+)
+
+func RunPolling(ctx context.Context, a *app.App) {
+	u := tgbotapi.NewUpdate(0)
+	u.Timeout = a.Cfg.TelegramGetUpdatesTimeout
+	ch := a.Bot.GetUpdatesChan(u)
+	for {
+		select {
+		case <-ctx.Done():
+			a.Bot.StopReceivingUpdates()
+			for range ch {
+			}
+			return
+		case upd, ok := <-ch:
+			if !ok {
+				return
+			}
+			HandleUpdate(context.Background(), a, upd)
+		}
+	}
+}
+
+func HandleUpdate(ctx context.Context, a *app.App, upd tgbotapi.Update) {
+	if upd.Message == nil {
+		return
+	}
+	msg := upd.Message
+	if !msg.IsCommand() {
+		return
+	}
+	cmd := strings.ToLower(msg.Command())
+	args := strings.TrimSpace(msg.CommandArguments())
+	send := func(text string) {
+		_, err := a.Bot.Send(tgbotapi.NewMessage(msg.Chat.ID, text))
+		if err != nil {
+			log.Printf("telegram send: %v", err)
+		}
+	}
+
+	switch cmd {
+	case "start":
+		if msg.From != nil {
+			u := msg.From.UserName
+			var un *string
+			if u != "" {
+				un = &u
+			}
+			fn := msg.From.FirstName
+			ln := msg.From.LastName
+			var f, l *string
+			if fn != "" {
+				f = &fn
+			}
+			if ln != "" {
+				l = &ln
+			}
+			_, err := a.Store.EnsureUser(ctx, int64(msg.From.ID), un, f, l)
+			if err != nil {
+				send("Ошибка БД. Попробуйте позже.")
+				return
+			}
+		}
+		send("Привет! Я присылаю новости по выбранным облигациям с оценкой тональности (OpenRouter).\n\n" +
+			"Команды:\n" +
+			"/add <ISIN или тикер> — добавить в отслеживание\n" +
+			"/list — список подписок\n" +
+			"/remove <ISIN или тикер> — отписаться\n" +
+			"/help — справка")
+	case "help":
+		send("/add <ISIN или тикер> — подписка (данные с MOEX).\n" +
+			"/list — отслеживаемые облигации.\n" +
+			"/remove <ISIN или тикер> — отписка.\n\n" +
+			"Пример: /add RU000A101F94 или /add SU26233RMFS5")
+	case "add":
+		if args == "" {
+			send("Укажите ISIN или тикер: /add RU000A101F94")
+			return
+		}
+		ok, ident, m := validator.ValidateIdentifier(args)
+		if !ok {
+			send(m)
+			return
+		}
+		if msg.From == nil {
+			return
+		}
+		rb, err := moex.ResolveBond(ctx, a.Cfg.UserAgent, ident)
+		if err != nil || rb == nil {
+			send("Не удалось найти облигацию на MOEX. Проверьте ISIN или тикер SECID.")
+			return
+		}
+		userID, err := a.Store.EnsureUser(ctx, int64(msg.From.ID), strPtr(msg.From.UserName), strPtr(msg.From.FirstName), strPtr(msg.From.LastName))
+		if err != nil {
+			send("Ошибка БД.")
+			return
+		}
+		b, err := a.Store.UpsertBond(ctx, rb.ISIN, rb.Ticker, rb.Name, rb.Issuer)
+		if err != nil {
+			send("Ошибка БД.")
+			return
+		}
+		if err := a.Store.SetSubscriptionActive(ctx, userID, b.ID, true); err != nil {
+			send("Ошибка БД.")
+			return
+		}
+		send(fmt.Sprintf("✅ Облигация \"%s\" добавлена в отслеживание. Буду присылать новости с анализом тональности.", rb.Name))
+	case "list":
+		if msg.From == nil {
+			return
+		}
+		uid, ok, err := a.Store.GetUserByTelegram(ctx, int64(msg.From.ID))
+		if err != nil || !ok {
+			send("Подписок пока нет. Используйте /add.")
+			return
+		}
+		bonds, err := a.Store.ListUserBonds(ctx, uid)
+		if err != nil {
+			send("Ошибка БД.")
+			return
+		}
+		if len(bonds) == 0 {
+			send("Список пуст. Добавьте облигацию: /add <ISIN или тикер>")
+			return
+		}
+		var lines []string
+		for _, b := range bonds {
+			line := fmt.Sprintf("• %s (%s)", b.Name, b.ISIN)
+			if b.Ticker != nil && *b.Ticker != "" {
+				line += fmt.Sprintf(" — %s", *b.Ticker)
+			}
+			lines = append(lines, line)
+		}
+		send("Отслеживаемые облигации:\n" + strings.Join(lines, "\n"))
+	case "remove":
+		if args == "" {
+			send("Укажите ISIN или тикер: /remove SU26233RMFS5")
+			return
+		}
+		ok, ident, m := validator.ValidateIdentifier(args)
+		if !ok {
+			send(m)
+			return
+		}
+		if msg.From == nil {
+			return
+		}
+		uid, ok, err := a.Store.GetUserByTelegram(ctx, int64(msg.From.ID))
+		if err != nil || !ok {
+			send("Подписок нет.")
+			return
+		}
+		b, err := a.Store.FindBondForUserRemove(ctx, uid, ident)
+		if err != nil || b == nil {
+			send("Такая облигация не найдена в ваших подписках.")
+			return
+		}
+		label := fmt.Sprintf("%s (%s)", b.Name, b.ISIN)
+		if err := a.Store.SetSubscriptionActive(ctx, uid, b.ID, false); err != nil {
+			send("Ошибка БД.")
+			return
+		}
+		send("Удалено из отслеживания: " + label + ".")
+	default:
+		send("Неизвестная команда. /help")
+	}
+}
+
+func strPtr(s string) *string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	return &s
+}
