@@ -42,7 +42,6 @@ func HandleUpdate(ctx context.Context, a *app.App, upd tgbotapi.Update) {
 		return
 	}
 	userID := int64(msg.From.ID)
-	log.Printf("telegram: message from user_id=%d, allowed_list=%v", userID, a.Cfg.AllowedTelegramUserIDs)
 	if len(a.Cfg.AllowedTelegramUserIDs) > 0 {
 		allowed := false
 		for _, id := range a.Cfg.AllowedTelegramUserIDs {
@@ -52,7 +51,6 @@ func HandleUpdate(ctx context.Context, a *app.App, upd tgbotapi.Update) {
 			}
 		}
 		if !allowed {
-			log.Printf("telegram: access denied for user_id=%d", userID)
 			_, _ = a.Bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "У вас нет доступа к этому боту."))
 			return
 		}
