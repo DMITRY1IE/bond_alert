@@ -19,8 +19,14 @@ const (
 	bondMarket       = "https://iss.moex.com/iss/engines/stock/markets/bonds/securities.json"
 )
 
+var moexLimiter = time.NewTicker(100 * time.Millisecond)
+
+func moexWait() {
+	<-moexLimiter.C
+}
+
 type issTable struct {
-	Columns []string          `json:"columns"`
+	Columns []string            `json:"columns"`
 	Data    [][]json.RawMessage `json:"data"`
 }
 
@@ -63,6 +69,7 @@ func str(m map[string]any, key string) string {
 }
 
 func getJSON(ctx context.Context, client *http.Client, rawURL string, params url.Values) ([]map[string]any, error) {
+	moexWait()
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, err

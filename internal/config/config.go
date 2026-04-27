@@ -23,7 +23,6 @@ type Config struct {
 
 	ParsingInterval time.Duration
 	UserAgent       string
-	RSSFeedURLs     []string
 
 	ListenAddr string
 	LogLevel   string
@@ -46,13 +45,6 @@ func getenvInt(key string, def int) int {
 }
 
 func Load() *Config {
-	rss := getenv("RSS_FEED_URLS", "https://www.cbr.ru/rss/eventrss")
-	var feeds []string
-	for _, u := range strings.Split(rss, ",") {
-		if s := strings.TrimSpace(u); s != "" {
-			feeds = append(feeds, s)
-		}
-	}
 	var allowedUserIDs []int64
 	allowedStr := getenv("TELEGRAM_ALLOWED_USER_IDS", "")
 	for _, idStr := range strings.Split(allowedStr, ",") {
@@ -79,7 +71,6 @@ func Load() *Config {
 		OpenRouterModel:           getenv("OPENROUTER_MODEL", "meta-llama/llama-3.2-3b-instruct:free"),
 		ParsingInterval:           time.Duration(min) * time.Minute,
 		UserAgent:                 getenv("USER_AGENT", "BondSentimentBot/1.0 (Go)"),
-		RSSFeedURLs:               feeds,
 		ListenAddr:                getenv("LISTEN_ADDR", ":8000"),
 		LogLevel:                  strings.ToUpper(getenv("LOG_LEVEL", "INFO")),
 	}

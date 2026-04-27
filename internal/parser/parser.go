@@ -2,30 +2,35 @@ package parser
 
 import (
 	"context"
-	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"golang.org/x/text/encoding/charmap"
 
 	"bond_alert_gin/internal/domain"
 )
 
 const (
 	smartLabNews   = "https://smart-lab.ru/blog/news/"
-	finamBondsRoot = "https://bonds.finam.ru/"
+	finamNewsToday = "https://bonds.finam.ru/news/today/"
 )
+
+var requestLimiter = time.NewTicker(100 * time.Millisecond)
+
+func waitForRateLimit() {
+	<-requestLimiter.C
+}
 
 func bondKeywords(b *domain.Bond) map[string]struct{} {
 	parts := make(map[string]struct{})
 	add := func(s string) {
 		s = strings.TrimSpace(s)
-		if len(s) >= 4 {
+		if len(s) >= 3 {
 			parts[strings.ToUpper(s)] = struct{}{}
 		}
 	}
@@ -41,13 +46,19 @@ func bondKeywords(b *domain.Bond) map[string]struct{} {
 			add(w)
 		}
 	}
+	if b.Issuer != nil && *b.Issuer != "" {
+		parts[strings.ToUpper(*b.Issuer)] = struct{}{}
+		for _, w := range regexp.MustCompile(`[^\p{L}\p{N}]+`).Split(*b.Issuer, -1) {
+			add(w)
+		}
+	}
 	return parts
 }
 
 func textMatches(text string, kw map[string]struct{}) bool {
 	u := strings.ToUpper(text)
 	for k := range kw {
-		if len(k) >= 4 && strings.Contains(u, k) {
+		if len(k) >= 3 && strings.Contains(u, k) {
 			return true
 		}
 	}
@@ -97,8 +108,9 @@ func getText(ctx context.Context, client *http.Client, ua, urlStr string) (strin
 	var last error
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * time.Second)
+			time.Sleep(time.Duration(attempt*2) * time.Second)
 		}
+		waitForRateLimit()
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
 		if err != nil {
 			return "", err
@@ -126,11 +138,46 @@ func getText(ctx context.Context, client *http.Client, ua, urlStr string) (strin
 	return "", last
 }
 
+func getTextWindows1251(ctx context.Context, client *http.Client, ua, urlStr string) (string, error) {
+	var last error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt*2) * time.Second)
+		}
+		waitForRateLimit()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
+		if err != nil {
+			return "", err
+		}
+		if ua != "" {
+			req.Header.Set("User-Agent", ua)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			last = err
+			continue
+		}
+		b, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			last = err
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			last = fmt.Errorf("http %d", resp.StatusCode)
+			continue
+		}
+		decoded, err := charmap.Windows1251.NewDecoder().Bytes(b)
+		if err != nil {
+			return string(b), nil
+		}
+		return string(decoded), nil
+	}
+	return "", last
+}
+
 func ParseSmartLab(ctx context.Context, client *http.Client, ua string, b *domain.Bond, maxPages int) ([]domain.ParsedItem, error) {
 	kw := bondKeywords(b)
-	if len(kw) == 0 {
-		return nil, nil
-	}
 	seen := map[string]struct{}{}
 	var out []domain.ParsedItem
 	for page := 1; page <= maxPages; page++ {
@@ -162,7 +209,7 @@ func ParseSmartLab(ctx context.Context, client *http.Client, ua string, b *domai
 			}
 			block := strings.TrimSpace(h.Next().Text())
 			blob := title + " " + block
-			if !textMatches(blob, kw) {
+			if len(kw) > 0 && !textMatches(blob, kw) {
 				return
 			}
 			seen[full] = struct{}{}
@@ -192,7 +239,7 @@ func ParseSmartLab(ctx context.Context, client *http.Client, ua string, b *domai
 			if p := s.Parent(); p != nil && p.Length() > 0 {
 				blob = strings.TrimSpace(p.Text())
 			}
-			if !textMatches(blob, kw) {
+			if len(kw) > 0 && !textMatches(blob, kw) {
 				return
 			}
 			seen[full] = struct{}{}
@@ -232,111 +279,6 @@ func truncate(s string, n int) string {
 	return s[:n]
 }
 
-func ParseFinam(ctx context.Context, client *http.Client, ua string, b *domain.Bond) ([]domain.ParsedItem, error) {
-	kw := bondKeywords(b)
-	if len(kw) == 0 {
-		return nil, nil
-	}
-	t := b.ISIN
-	if b.Ticker != nil && *b.Ticker != "" {
-		t = *b.Ticker
-	}
-	u := finamBondsRoot + "?query=" + url.QueryEscape(t)
-	html, err := getText(ctx, client, ua, u)
-	if err != nil {
-		return nil, nil
-	}
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
-	if err != nil {
-		return nil, nil
-	}
-	var out []domain.ParsedItem
-	doc.Find("a[href]").Each(func(_ int, s *goquery.Selection) {
-		if len(out) >= 20 {
-			return
-		}
-		href, _ := s.Attr("href")
-		title := strings.TrimSpace(s.Text())
-		if len(title) < 8 {
-			return
-		}
-		full := absolutize("https://bonds.finam.ru", href)
-		if strings.HasPrefix(href, "http") {
-			full = href
-		}
-		if !textMatches(title, kw) {
-			return
-		}
-		out = append(out, domain.ParsedItem{
-			Title:   truncate(title, 500),
-			URL:     truncate(full, 2000),
-			Summary: "",
-			Source:  "bonds.finam.ru",
-		})
-	})
-	return out, nil
-}
-
-type rssChannel struct {
-	Items []rssItem `xml:"item"`
-}
-
-type rssItem struct {
-	Title       string `xml:"title"`
-	Link        string `xml:"link"`
-	Description string `xml:"description"`
-	PubDate     string `xml:"pubDate"`
-}
-
-type rssRoot struct {
-	Channel rssChannel `xml:"channel"`
-}
-
-func ParseRSS(ctx context.Context, client *http.Client, ua, feedURL string, b *domain.Bond) ([]domain.ParsedItem, error) {
-	body, err := getText(ctx, client, ua, feedURL)
-	if err != nil {
-		return nil, err
-	}
-	var root rssRoot
-	if err := xml.Unmarshal([]byte(body), &root); err != nil {
-		return nil, err
-	}
-	kw := bondKeywords(b)
-	var out []domain.ParsedItem
-	for _, it := range root.Channel.Items {
-		title := strings.TrimSpace(it.Title)
-		link := strings.TrimSpace(it.Link)
-		if title == "" || link == "" {
-			continue
-		}
-		blob := title + " " + strings.TrimSpace(it.Description)
-		if len(kw) > 0 && !textMatches(blob, kw) {
-			continue
-		}
-		var pub *time.Time
-		if it.PubDate != "" {
-			for _, layout := range []string{
-				time.RFC1123Z, time.RFC1123, time.RFC822Z, time.RFC822,
-				"Mon, 02 Jan 2006 15:04:05 -0700",
-			} {
-				if t, err := time.Parse(layout, strings.TrimSpace(it.PubDate)); err == nil {
-					tt := t.In(time.Local)
-					pub = &tt
-					break
-				}
-			}
-		}
-		out = append(out, domain.ParsedItem{
-			Title:       truncate(title, 500),
-			URL:         truncate(link, 2000),
-			Summary:     truncate(strings.TrimSpace(it.Description), 1000),
-			PublishedAt: pub,
-			Source:      "rss",
-		})
-	}
-	return out, nil
-}
-
 func FetchArticleBody(ctx context.Context, client *http.Client, ua, pageURL string, maxLen int) string {
 	html, err := getText(ctx, client, ua, pageURL)
 	if err != nil || html == "" {
@@ -371,7 +313,7 @@ func FetchArticleBody(ctx context.Context, client *http.Client, ua, pageURL stri
 	return text
 }
 
-func Collect(ctx context.Context, client *http.Client, ua string, b *domain.Bond, rssURLs []string) ([]domain.ParsedItem, error) {
+func Collect(ctx context.Context, client *http.Client, ua string, b *domain.Bond) ([]domain.ParsedItem, error) {
 	byURL := map[string]domain.ParsedItem{}
 	add := func(items []domain.ParsedItem) {
 		for _, it := range items {
@@ -385,15 +327,67 @@ func Collect(ctx context.Context, client *http.Client, ua string, b *domain.Bond
 	}
 	sl, _ := ParseSmartLab(ctx, client, ua, b, 2)
 	add(sl)
-	fm, _ := ParseFinam(ctx, client, ua, b)
-	add(fm)
-	for _, u := range rssURLs {
-		rs, _ := ParseRSS(ctx, client, ua, u, b)
-		add(rs)
-	}
+	fn, _ := ParseFinamNews(ctx, client, ua, b, 1)
+	add(fn)
 	out := make([]domain.ParsedItem, 0, len(byURL))
 	for _, v := range byURL {
 		out = append(out, v)
+	}
+	return out, nil
+}
+
+func ParseFinamNews(ctx context.Context, client *http.Client, ua string, b *domain.Bond, maxPages int) ([]domain.ParsedItem, error) {
+	kw := bondKeywords(b)
+	seen := map[string]struct{}{}
+	var out []domain.ParsedItem
+	for page := 1; page <= maxPages; page++ {
+		u := finamNewsToday
+		if page > 1 {
+			u = fmt.Sprintf("%spage%d/", finamNewsToday, page)
+		}
+		html, err := getTextWindows1251(ctx, client, ua, u)
+		if err != nil {
+			break
+		}
+		doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+		if err != nil {
+			continue
+		}
+		doc.Find("a[href*='/news/item/']").Each(func(_ int, s *goquery.Selection) {
+			href, _ := s.Attr("href")
+			if href == "" {
+				return
+			}
+			full := absolutize("https://bonds.finam.ru", href)
+			if _, ok := seen[full]; ok {
+				return
+			}
+			title := strings.TrimSpace(s.Text())
+			if len(title) < 15 {
+				return
+			}
+			if len(kw) > 0 && !textMatches(title, kw) {
+				return
+			}
+			seen[full] = struct{}{}
+			now := time.Now()
+			out = append(out, domain.ParsedItem{
+				Title:       truncate(title, 500),
+				URL:         full,
+				Summary:     "",
+				Source:      "bonds.finam.ru",
+				PublishedAt: &now,
+			})
+			if len(out) >= 30 {
+				return
+			}
+		})
+		if len(out) >= 30 {
+			break
+		}
+	}
+	if len(out) > 30 {
+		out = out[:30]
 	}
 	return out, nil
 }

@@ -33,7 +33,6 @@ services:
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-meta-llama/llama-3.2-3b-instruct:free}
       PARSING_INTERVAL_MINUTES: ${PARSING_INTERVAL_MINUTES:-30}
       USER_AGENT: ${USER_AGENT:-BondSentimentBot/1.0}
-      RSS_FEED_URLS: ${RSS_FEED_URLS:-https://www.cbr.ru/rss/eventrss}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LISTEN_ADDR: ${LISTEN_ADDR:-:8000}
       PGHOST: postgres

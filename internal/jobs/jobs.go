@@ -38,7 +38,7 @@ func processBond(ctx context.Context, cfg *config.Config, st *store.Store, or *o
 	if err != nil || b == nil {
 		return
 	}
-	items, err := parser.Collect(ctx, client, cfg.UserAgent, b, cfg.RSSFeedURLs)
+	items, err := parser.Collect(ctx, client, cfg.UserAgent, b)
 	if err != nil {
 		log.Printf("jobs: collect bond=%d: %v", bondID, err)
 		return

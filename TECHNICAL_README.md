@@ -8,7 +8,7 @@
 
 - **Telegram контур**: обработка команд пользователя (`/start`, `/add`, `/list`, `/remove`).
 - **Планировщик**: периодический запуск парсинга и рассылки.
-- **Интеграции**: MOEX (поиск облигаций), OpenRouter (сентимент), сайты новостей (Smart-Lab, Finam, RSS).
+- **Интеграции**: MOEX (поиск облигаций), OpenRouter (сентимент), сайты новостей (Smart-Lab, Finam).
 - **Persistence**: PostgreSQL (пользователи, подписки, новости, доставка).
 
 Точка входа: `cmd/server/main.go`.
@@ -19,11 +19,12 @@
 
 1. Пользователь отправляет `/add <ISIN|SECID>`.
 2. `internal/telegram/telegram.go` валидирует ввод через `internal/validator`.
-3. Вызывается `internal/moex.ResolveBond(...)`:
+3. Проверка доступа по `TELEGRAM_ALLOWED_USER_IDS` (если задан).
+4. Вызывается `internal/moex.ResolveBond(...)`:
    - поиск бумаги в ISS;
    - выбор облигационного инструмента;
    - добор деталей по `secid` (ISIN/имя/board).
-4. `internal/store` делает `UpsertBond(...)` и активирует подписку `SetSubscriptionActive(...)`.
+5. `internal/store` делает `UpsertBond(...)` и активирует подписку `SetSubscriptionActive(...)`.
 
 ### 2.2 Фоновый цикл парсинга
 
@@ -31,14 +32,14 @@
 2. `jobs` получает список облигаций с активными подписками.
 3. Для каждой бумаги:
    - `parser.Collect(...)` тянет новости из:
-     - Smart-Lab;
-     - bonds.finam.ru;
-     - RSS (`RSS_FEED_URLS`).
+     - Smart-Lab (UTF-8, парсит дату из текста);
+     - Finam News (windows-1251, текущая дата).
+   - поиск по ISIN, тикеру, названию, эмитенту;
    - дедуп по URL.
 4. Для каждой новой новости:
    - если summary короткий, догружается тело статьи `FetchArticleBody(...)`;
    - вызывается OpenRouter `AnalyzeSentimentOrNeutral(...)`;
-   - сохраняется запись в `news`.
+   - сохраняется запись в `news` с датой публикации.
 5. `notifier.Deliver(...)` отправляет сообщение всем активным подписчикам.
 6. В `news_delivery` фиксируется факт отправки.
 
@@ -48,7 +49,7 @@
   Инициализация приложения, БД, Telegram режима (webhook/polling), cron, Gin HTTP server, graceful shutdown.
 
 - `internal/config/config.go`  
-  Загрузка env-переменных, дефолты, разбор RSS и интервала.
+  Загрузка env-переменных, дефолты, парсинг списка разрешённых пользователей.
 
 - `internal/app/app.go`  
   DI-контейнер: `Store`, `OpenRouter client`, `Telegram BotAPI`, конфиг.
@@ -60,16 +61,16 @@
   Все SQL-операции: пользователи, облигации, подписки, новости, доставка.
 
 - `internal/telegram/telegram.go`  
-  Long polling и обработчики команд.
+  Long polling, проверка доступа, обработчики команд. После `/start` показывает пример новости.
 
 - `internal/httpserver/httpserver.go`  
   Gin-роуты: `/`, `/health`, `/telegram/webhook`.
 
 - `internal/moex/resolve.go`  
-  Резолв ISIN/тикера через MOEX ISS.
+  Резолв ISIN/тикера через MOEX ISS. Rate limiting 100ms между запросами.
 
 - `internal/parser/parser.go`  
-  Парсинг сайтов/лент + доп. извлечение тела новости.
+  Парсинг SmartLab и Finam с rate limiting 100ms. Декодирование windows-1251 для Finam.
 
 - `internal/openrouter/openrouter.go`  
   Вызов `chat/completions`, извлечение JSON из ответа, нормализация сентимента.
@@ -78,7 +79,7 @@
   Координация pipeline сбора/анализа/рассылки.
 
 - `internal/notifier/notifier.go`  
-  Формат Telegram-сообщения и отправка подписчикам.
+  Формат Telegram-сообщения (включая дату) и отправка подписчикам.
 
 - `migrations/001_init.sql`  
   Начальная схема базы данных.
@@ -87,71 +88,107 @@
 
 Основные таблицы:
 
-- `users`
-- `bonds`
-- `subscriptions` (many-to-many + `is_active`)
-- `news` (URL уникален, хранит сентимент и reason)
-- `news_delivery` (кому и когда отправлено)
+- `users` — Telegram пользователи
+- `bonds` — облигации (ISIN, тикер, название, эмитент)
+- `subscriptions` — many-to-many users/bonds + `is_active`
+- `news` — новости (URL уникален, сентимент, reason, дата публикации)
+- `news_delivery` — кому и когда отправлено
 
-Схема совпадает с Python-версией по смыслу (MVP).
+## 5) Источники новостей
 
-## 5) Режимы Telegram
+| Источник | URL | Кодировка | Дата |
+|----------|-----|-----------|------|
+| SmartLab | `https://smart-lab.ru/blog/news/` | UTF-8 | Парсится из текста |
+| Finam | `https://bonds.finam.ru/news/today/` | windows-1251 | Текущая дата |
+
+### Ключевые слова для поиска
+
+- ISIN облигации (например, `SU26233RMFS5`)
+- Тикер SECID
+- Название облигации (слова >= 3 символов)
+- Эмитент (компания-выпуск)
+
+## 6) Режимы Telegram
 
 - **Long polling**: если `TELEGRAM_WEBHOOK_URL` пустой.
 - **Webhook**: если `TELEGRAM_WEBHOOK_URL` задан.
 
-Важно: библиотека `go-telegram-bot-api/v5` (используемая версия) ограничивает удобную установку `secret_token`; входящий секрет проверяется в Gin по заголовку `X-Telegram-Bot-Api-Secret-Token`.
+## 7) Ограничение доступа
 
-## 6) Переменные окружения (ключевые)
+Переменная `TELEGRAM_ALLOWED_USER_IDS` — список Telegram ID через запятую.
+Если пусто — доступ для всех.
 
-Обязательные:
+## 8) Переменные окружения
 
-- `TELEGRAM_BOT_TOKEN`
-- `DATABASE_URL`
-- `OPENROUTER_API_KEY`
+### Обязательные
 
-Опциональные:
+- `TELEGRAM_BOT_TOKEN` — токен от @BotFather
+- `OPENROUTER_API_KEY` — ключ OpenRouter
 
-- `OPENROUTER_BASE_URL`
-- `OPENROUTER_MODEL`
-- `PARSING_INTERVAL_MINUTES`
-- `RSS_FEED_URLS`
-- `TELEGRAM_WEBHOOK_URL`
-- `TELEGRAM_WEBHOOK_SECRET`
-- `TELEGRAM_HTTP_TIMEOUT_SEC`
-- `TELEGRAM_GET_UPDATES_TIMEOUT`
-- `LISTEN_ADDR`
+### Опциональные
 
-## 7) Docker runtime
+| Переменная | По умолчанию | Описание |
+|------------|--------------|----------|
+| `TELEGRAM_ALLOWED_USER_IDS` | "" | Разрешённые ID через запятую |
+| `TELEGRAM_WEBHOOK_URL` | "" | URL для webhook |
+| `TELEGRAM_WEBHOOK_SECRET` | "" | Секрет webhook |
+| `PARSING_INTERVAL_MINUTES` | 30 | Интервал парсинга |
+| `OPENROUTER_MODEL` | inclusionai/ling-2.6-flash:free | Модель LLM |
+| `LOG_LEVEL` | INFO | Уровень логирования |
+| `LISTEN_ADDR` | :8000 | Адрес HTTP сервера |
 
-- `Dockerfile` собирает бинарник и запускает `/server`.
+## 9) Docker runtime
+
+Запуск одной командой:
+
+```bash
+docker compose up --build -d
+```
+
+- `Dockerfile` собирает бинарник и запускает `/server`
 - `scripts/docker-entrypoint.sh`:
   1. ждёт доступность Postgres (`pg_isready`);
   2. накатывает `migrations/001_init.sql`;
-  3. запускает сервер.
-- `docker-compose.yml` поднимает `postgres` + `bot`.
+  3. запускает сервер
+- `docker-compose.yml` поднимает `postgres` + `bot`
 
-## 8) Отладка и типовые проблемы
+## 10) Rate Limiting
 
-- **`missing go.sum entry`**  
-  Выполнить `go mod tidy`, закоммитить `go.sum`.
+- MOEX ISS: 100ms между запросами (max ~10 req/s)
+- Parser: 100ms между запросами к внешним сайтам
 
-- **Проблемы с Telegram API / timeout**  
-  Увеличить `TELEGRAM_HTTP_TIMEOUT_SEC`; проверить сеть из контейнера.
+## 11) Отладка
 
-- **Нет новостей из Finam**  
-  Возможен антибот/блокировки — это ожидаемо; используйте RSS + Smart-Lab.
+### Нет новостей
 
-- **OpenRouter вернул невалидный текст**  
-  Клиент извлекает JSON regexp-ом; при ошибке fallback: `NEUTRAL`.
+1. Проверить логи: `docker compose logs bot`
+2. Проверить ключевые слова — длина >= 3 символов
+3. Проверить что облигация в подписках: `/list` в боте
 
-## 9) Минимальный smoke test
+### Доступ запрещён
 
-1. `docker compose up --build -d`
-2. Проверить `GET /health` -> `{"status":"ok"}`
-3. В Telegram:
-   - `/start`
-   - `/add RU000A101F94`
-   - `/list`
-4. Подождать один цикл парсинга (`PARSING_INTERVAL_MINUTES`) и проверить доставку.
+Проверить `TELEGRAM_ALLOWED_USER_IDS` в .env и пересоздать контейнер.
 
+### OpenRouter ошибки
+
+- Проверить `OPENROUTER_API_KEY`
+- Проверить баланс на openrouter.ai
+
+## 12) Smoke test
+
+```bash
+# 1. Запуск
+docker compose up --build -d
+
+# 2. Health check
+curl http://localhost:8000/health
+# {"status":"ok"}
+
+# 3. Telegram
+/start
+/add SU26233RMFS5
+/list
+
+# 4. Проверить логи парсинга
+docker compose logs bot | grep -i "jobs:"
+```
