@@ -38,6 +38,19 @@ func HandleUpdate(ctx context.Context, a *app.App, upd tgbotapi.Update) {
 		return
 	}
 	msg := upd.Message
+	if len(a.Cfg.AllowedTelegramUserIDs) > 0 && msg.From != nil {
+		allowed := false
+		for _, id := range a.Cfg.AllowedTelegramUserIDs {
+			if id == int64(msg.From.ID) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			_, _ = a.Bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "У вас нет доступа к этому боту."))
+			return
+		}
+	}
 	if !msg.IsCommand() {
 		return
 	}

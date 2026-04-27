@@ -10,15 +10,16 @@ import (
 type Config struct {
 	DatabaseURL string
 
-	TelegramBotToken           string
-	TelegramWebhookURL       string
-	TelegramWebhookSecret    string
-	TelegramHTTPTimeoutSec   int
+	TelegramBotToken          string
+	TelegramWebhookURL        string
+	TelegramWebhookSecret     string
+	TelegramHTTPTimeoutSec    int
 	TelegramGetUpdatesTimeout int
+	AllowedTelegramUserIDs    []int64
 
-	OpenRouterAPIKey   string
-	OpenRouterBaseURL  string
-	OpenRouterModel    string
+	OpenRouterAPIKey  string
+	OpenRouterBaseURL string
+	OpenRouterModel   string
 
 	ParsingInterval time.Duration
 	UserAgent       string
@@ -52,6 +53,15 @@ func Load() *Config {
 			feeds = append(feeds, s)
 		}
 	}
+	var allowedUserIDs []int64
+	allowedStr := getenv("TELEGRAM_ALLOWED_USER_IDS", "")
+	for _, idStr := range strings.Split(allowedStr, ",") {
+		if s := strings.TrimSpace(idStr); s != "" {
+			if id, err := strconv.ParseInt(s, 10, 64); err == nil {
+				allowedUserIDs = append(allowedUserIDs, id)
+			}
+		}
+	}
 	min := getenvInt("PARSING_INTERVAL_MINUTES", 30)
 	if min < 1 {
 		min = 1
@@ -63,6 +73,7 @@ func Load() *Config {
 		TelegramWebhookSecret:     getenv("TELEGRAM_WEBHOOK_SECRET", ""),
 		TelegramHTTPTimeoutSec:    getenvInt("TELEGRAM_HTTP_TIMEOUT_SEC", 60),
 		TelegramGetUpdatesTimeout: getenvInt("TELEGRAM_GET_UPDATES_TIMEOUT", 60),
+		AllowedTelegramUserIDs:    allowedUserIDs,
 		OpenRouterAPIKey:          getenv("OPENROUTER_API_KEY", ""),
 		OpenRouterBaseURL:         getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
 		OpenRouterModel:           getenv("OPENROUTER_MODEL", "meta-llama/llama-3.2-3b-instruct:free"),
