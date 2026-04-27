@@ -288,7 +288,9 @@ func FetchArticleBody(ctx context.Context, client *http.Client, ua, pageURL stri
 	if err != nil {
 		return ""
 	}
-	doc.Find("script, style, nav, header, footer").Remove()
+	doc.Find("script, style, nav, header, footer, form, .login, .auth, .authorization, .sidebar, .comments").Remove()
+	doc.Find("[class*='login'], [class*='auth'], [class*='register'], [id*='login'], [id*='auth']").Remove()
+
 	text := strings.TrimSpace(doc.Find("article").First().Text())
 	if text == "" {
 		text = strings.TrimSpace(doc.Find("main").First().Text())
@@ -299,7 +301,7 @@ func FetchArticleBody(ctx context.Context, client *http.Client, ua, pageURL stri
 				return
 			}
 			cls, _ := s.Attr("class")
-			if ok, _ := regexp.MatchString(`(?i)content|article|post`, cls); ok {
+			if ok, _ := regexp.MatchString(`(?i)content|article|post|news-item|entry`, cls); ok {
 				text = strings.TrimSpace(s.Text())
 			}
 		})
@@ -307,10 +309,40 @@ func FetchArticleBody(ctx context.Context, client *http.Client, ua, pageURL stri
 	if text == "" {
 		text = strings.TrimSpace(doc.Find("body").Text())
 	}
+
+	text = filterGarbage(text)
 	if len(text) > maxLen {
 		text = text[:maxLen]
 	}
 	return text
+}
+
+func filterGarbage(text string) string {
+	garbagePatterns := []string{
+		"Авторизация", "Зарегистрироваться", "Логин", "Пароль",
+		"Напомнить пароль", "Войти", "Запомнить меня",
+		"Регистрация", "Восстановление пароля",
+	}
+	lines := strings.Split(text, "\n")
+	var filtered []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		isGarbage := false
+		upper := strings.ToUpper(line)
+		for _, g := range garbagePatterns {
+			if strings.Contains(upper, strings.ToUpper(g)) && len(line) < 50 {
+				isGarbage = true
+				break
+			}
+		}
+		if !isGarbage {
+			filtered = append(filtered, line)
+		}
+	}
+	return strings.Join(filtered, "\n")
 }
 
 func Collect(ctx context.Context, client *http.Client, ua string, b *domain.Bond) ([]domain.ParsedItem, error) {
