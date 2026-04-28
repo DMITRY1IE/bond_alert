@@ -14,6 +14,16 @@ import (
 )
 
 func RunPolling(ctx context.Context, a *app.App) {
+	commands := []tgbotapi.BotCommand{
+		{Command: "add", Description: "Добавить облигацию в отслеживание"},
+		{Command: "list", Description: "Список отслеживаемых облигаций"},
+		{Command: "remove", Description: "Удалить облигацию из отслеживания"},
+		{Command: "help", Description: "Справка по командам"},
+	}
+	if _, err := a.Bot.Request(tgbotapi.NewSetMyCommands(commands...)); err != nil {
+		log.Printf("failed to set bot commands: %v", err)
+	}
+
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = a.Cfg.TelegramGetUpdatesTimeout
 	ch := a.Bot.GetUpdatesChan(u)
