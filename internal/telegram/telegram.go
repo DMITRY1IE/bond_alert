@@ -149,6 +149,15 @@ func HandleUpdate(ctx context.Context, a *app.App, upd tgbotapi.Update) {
 			send("Ошибка БД.")
 			return
 		}
+		isActive, err := a.Store.IsSubscriptionActive(ctx, userID, b.ID)
+		if err != nil {
+			send("Ошибка БД.")
+			return
+		}
+		if isActive {
+			send(fmt.Sprintf("ℹ️ Облигация \"%s\" уже есть в вашем списке отслеживания.", rb.Name))
+			return
+		}
 		if err := a.Store.SetSubscriptionActive(ctx, userID, b.ID, true); err != nil {
 			send("Ошибка БД.")
 			return
