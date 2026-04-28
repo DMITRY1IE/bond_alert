@@ -2,6 +2,7 @@ package parser
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,9 +17,23 @@ import (
 )
 
 const (
-	smartLabNews   = "https://smart-lab.ru/blog/news/"
-	finamNewsToday = "https://bonds.finam.ru/news/today/"
+	smartLabNews = "https://smart-lab.ru/blog/news/"
+	finamNewsRSS = "https://bonds.finam.ru/news/today/rss.asp"
 )
+
+type rssFeed struct {
+	XMLName xml.Name `xml:"rss"`
+	Channel struct {
+		Items []rssItem `xml:"item"`
+	} `xml:"channel"`
+}
+
+type rssItem struct {
+	Title       string `xml:"title"`
+	Link        string `xml:"link"`
+	Description string `xml:"description"`
+	PubDate     string `xml:"pubDate"`
+}
 
 var requestLimiter = time.NewTicker(100 * time.Millisecond)
 
@@ -26,12 +41,24 @@ func waitForRateLimit() {
 	<-requestLimiter.C
 }
 
+var stopWords = map[string]struct{}{
+	"АО": {}, "ПАО": {}, "ОАО": {}, "ООО": {}, "ЗАО": {},
+	"БАНК": {}, "КОМПАНИЯ": {}, "ХОЛДИНГ": {}, "ГРУППА": {},
+	"ОБЛИГАЦИИ": {}, "ОБЛИГАЦИЯ": {}, "БО": {}, "КЛ": {},
+	"СЕРИИ": {}, "СЕРИЯ": {},
+	"ОБЩЕСТВО": {}, "АКЦИОНЕРНОЕ": {}, "ОТКРЫТОЕ": {}, "ЗАКРЫТОЕ": {},
+	"ЛТД": {}, "ИНК": {}, "ГМБХ": {},
+	"ОБ": {}, "ИО": {}, "МР": {}, "ПР": {},
+}
+
 func bondKeywords(b *domain.Bond) map[string]struct{} {
 	parts := make(map[string]struct{})
 	add := func(s string) {
 		s = strings.TrimSpace(s)
 		if len(s) >= 3 {
-			parts[strings.ToUpper(s)] = struct{}{}
+			if _, stop := stopWords[strings.ToUpper(s)]; !stop {
+				parts[strings.ToUpper(s)] = struct{}{}
+			}
 		}
 	}
 	if b.ISIN != "" {
@@ -55,19 +82,10 @@ func bondKeywords(b *domain.Bond) map[string]struct{} {
 	return parts
 }
 
-var wordBoundaryRe = regexp.MustCompile(`(?i)(?:^|[^\p{L}\p{N}])(\p{L}[\p{L}\p{N}]*)(?:[^\p{L}\p{N}]|$)`)
-
 func textMatches(text string, kw map[string]struct{}) bool {
-	words := make(map[string]struct{})
-	matches := wordBoundaryRe.FindAllStringSubmatch(text, -1)
-	for _, m := range matches {
-		if len(m) > 1 {
-			words[strings.ToUpper(m[1])] = struct{}{}
-		}
-	}
-	for k := range kw {
-		if len(k) >= 3 {
-			if _, ok := words[strings.ToUpper(k)]; ok {
+	for _, word := range regexp.MustCompile(`[^\p{L}\p{N}]+`).Split(text, -1) {
+		if len(word) >= 3 {
+			if _, ok := kw[strings.ToUpper(word)]; ok {
 				return true
 			}
 		}
@@ -369,7 +387,7 @@ func Collect(ctx context.Context, client *http.Client, ua string, b *domain.Bond
 	}
 	sl, _ := ParseSmartLab(ctx, client, ua, b, 2)
 	add(sl)
-	fn, _ := ParseFinamNews(ctx, client, ua, b, 1)
+	fn, _ := ParseFinamRSS(ctx, client, ua, b)
 	add(fn)
 	out := make([]domain.ParsedItem, 0, len(byURL))
 	for _, v := range byURL {
@@ -378,58 +396,73 @@ func Collect(ctx context.Context, client *http.Client, ua string, b *domain.Bond
 	return out, nil
 }
 
-func ParseFinamNews(ctx context.Context, client *http.Client, ua string, b *domain.Bond, maxPages int) ([]domain.ParsedItem, error) {
+func ParseFinamRSS(ctx context.Context, client *http.Client, ua string, b *domain.Bond) ([]domain.ParsedItem, error) {
 	kw := bondKeywords(b)
-	seen := map[string]struct{}{}
+	raw, err := getTextWindows1251(ctx, client, ua, finamNewsRSS)
+	if err != nil || raw == "" {
+		return nil, err
+	}
+	raw = regexp.MustCompile(`encoding="[^"]+"`).ReplaceAllString(raw, `encoding="UTF-8"`)
+	var feed rssFeed
+	if err := xml.Unmarshal([]byte(raw), &feed); err != nil {
+		return nil, err
+	}
 	var out []domain.ParsedItem
-	for page := 1; page <= maxPages; page++ {
-		u := finamNewsToday
-		if page > 1 {
-			u = fmt.Sprintf("%spage%d/", finamNewsToday, page)
-		}
-		html, err := getTextWindows1251(ctx, client, ua, u)
-		if err != nil {
-			break
-		}
-		doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
-		if err != nil {
+	seen := map[string]struct{}{}
+	for _, item := range feed.Channel.Items {
+		title := strings.TrimSpace(item.Title)
+		link := strings.TrimSpace(item.Link)
+		if title == "" || link == "" {
 			continue
 		}
-		doc.Find("a[href*='/news/item/']").Each(func(_ int, s *goquery.Selection) {
-			href, _ := s.Attr("href")
-			if href == "" {
-				return
-			}
-			full := absolutize("https://bonds.finam.ru", href)
-			if _, ok := seen[full]; ok {
-				return
-			}
-			title := strings.TrimSpace(s.Text())
-			if len(title) < 15 {
-				return
-			}
-			if len(kw) > 0 && !textMatches(title, kw) {
-				return
-			}
-			seen[full] = struct{}{}
-			now := time.Now()
-			out = append(out, domain.ParsedItem{
-				Title:       truncate(title, 500),
-				URL:         full,
-				Summary:     "",
-				Source:      "bonds.finam.ru",
-				PublishedAt: &now,
-			})
-			if len(out) >= 30 {
-				return
-			}
+		if _, ok := seen[link]; ok {
+			continue
+		}
+		desc := stripHTML(item.Description)
+		blob := title + " " + desc
+		matched := textMatches(blob, kw)
+		if len(kw) > 0 && !matched {
+			continue
+		}
+		seen[link] = struct{}{}
+		var pub *time.Time
+		if t := parseRSSDate(item.PubDate); t != nil {
+			pub = t
+		}
+		out = append(out, domain.ParsedItem{
+			Title:       truncate(title, 500),
+			URL:         link,
+			Summary:     truncate(desc, 1000),
+			Source:      "bonds.finam.ru",
+			PublishedAt: pub,
 		})
-		if len(out) >= 30 {
+		if len(out) >= 50 {
 			break
 		}
 	}
-	if len(out) > 30 {
-		out = out[:30]
-	}
 	return out, nil
+}
+
+func stripHTML(s string) string {
+	s = regexp.MustCompile(`<[^>]+>`).ReplaceAllString(s, " ")
+	s = htmlEntityRe.ReplaceAllString(s, " ")
+	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
+	return strings.TrimSpace(s)
+}
+
+var htmlEntityRe = regexp.MustCompile(`&[a-zA-Z]+;`)
+
+func parseRSSDate(s string) *time.Time {
+	layouts := []string{
+		time.RFC1123,
+		time.RFC1123Z,
+		"Mon, 2 Jan 2006 15:04:05 -0700",
+		"Mon, 02 Jan 2006 15:04:05 -0700",
+	}
+	for _, lay := range layouts {
+		if t, err := time.Parse(lay, s); err == nil {
+			return &t
+		}
+	}
+	return nil
 }
