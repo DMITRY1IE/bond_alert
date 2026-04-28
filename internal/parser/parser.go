@@ -55,11 +55,21 @@ func bondKeywords(b *domain.Bond) map[string]struct{} {
 	return parts
 }
 
+var wordBoundaryRe = regexp.MustCompile(`(?i)(?:^|[^\p{L}\p{N}])(\p{L}[\p{L}\p{N}]*)(?:[^\p{L}\p{N}]|$)`)
+
 func textMatches(text string, kw map[string]struct{}) bool {
-	u := strings.ToUpper(text)
+	words := make(map[string]struct{})
+	matches := wordBoundaryRe.FindAllStringSubmatch(text, -1)
+	for _, m := range matches {
+		if len(m) > 1 {
+			words[strings.ToUpper(m[1])] = struct{}{}
+		}
+	}
 	for k := range kw {
-		if len(k) >= 3 && strings.Contains(u, k) {
-			return true
+		if len(k) >= 3 {
+			if _, ok := words[strings.ToUpper(k)]; ok {
+				return true
+			}
 		}
 	}
 	return false
