@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -138,7 +139,27 @@ func (c *Client) AnalyzeSentiment(ctx context.Context, newsText string) (sentime
 func (c *Client) AnalyzeSentimentOrNeutral(ctx context.Context, newsText string) (sentiment, reason string) {
 	s, r, err := c.AnalyzeSentiment(ctx, newsText)
 	if err != nil {
-		return "NEUTRAL", "Техническая ошибка анализа. Новость требует ручной оценки."
+		log.Printf("AnalyzeSentiment error: %v", err)
+		return fallbackSentiment(newsText)
 	}
 	return s, r
+}
+
+func fallbackSentiment(text string) (sentiment, reason string) {
+	lower := strings.ToLower(text)
+	
+	negativeWords := []string{"убыт", "дефолт", "банкрот", "снижени", "падени", "реструктуризаци", "суд", "иск", "нарушен", "просроч", "невыполн", "отказ", "увольнен", "сокращ", "кризис", "риск", "угроз", "ухудш"}
+	positiveWords := []string{"рост", "увеличен", "прибыл", "доход", "размещен", "успешн", "повыш", "рекорд", "превыш", "позитив", "развит", "расшир", "покупк", "погашен", "выплат"}
+	
+	for _, w := range negativeWords {
+		if strings.Contains(lower, w) {
+			return "NEGATIVE", "Обнаружены негативные факторы в тексте новости."
+		}
+	}
+	for _, w := range positiveWords {
+		if strings.Contains(lower, w) {
+			return "POSITIVE", "Обнаружены позитивные факторы в тексте новости."
+		}
+	}
+	return "NEUTRAL", "Существенных факторов не выявлено. Требуется детальный анализ."
 }
