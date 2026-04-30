@@ -13,9 +13,8 @@ import (
 
 func TestTextMatches(t *testing.T) {
 	kw := map[string]struct{}{
-		"ЭТАЛОН":     {},
-		"ФИНАНС":     {},
-		"ЭТАЛОНФИН5": {},
+		"ЭТАЛОН-ФИНАНС": {},
+		"ЭТАЛОНФИН5":   {},
 	}
 
 	tests := []struct {
@@ -26,7 +25,7 @@ func TestTextMatches(t *testing.T) {
 		{"Банки помогают заемщикам, облегчая финансовые трудности", false},
 		{"ЭТАЛОНФИН5 - новая облигация", true},
 		{"финансовые новости", false},
-		{"Компания Эталон сообщает", true},
+		{"АО Эталон-Финанс", true},
 		{"АО Эталон-Финанс", true},
 	}
 
@@ -177,6 +176,27 @@ func TestSmartLabPKB(t *testing.T) {
 	news := "ВВП России в I кв. 2026 г. снизился на 0,3%"
 	if textMatches(news, kw) {
 		t.Errorf("News should NOT match for PKB: %q", news)
+	}
+}
+
+func TestTGK14(t *testing.T) {
+	bond := &domain.Bond{
+		ISIN:   "RU000A10AS02",
+		Name:   "ТГК-14 1Р5",
+		Issuer: strPtr("Публичное акционерное общество \"Территориальная генерирующая компания № 14\""),
+	}
+
+	kw := bondKeywords(bond)
+	t.Logf("Keywords: %v (len=%d)", kw, len(kw))
+
+	news := "ТГК-1 не будет публиковать отчетность по РСБУ за 1кв 2026г"
+	if textMatches(news, kw) {
+		t.Errorf("News should NOT match for TGK-14 (it's about TGK-1): %q", news)
+	}
+
+	news2 := "ТГК-14 выпустила новые облигации"
+	if !textMatches(news2, kw) {
+		t.Errorf("News SHOULD match for TGK-14: %q", news2)
 	}
 }
 

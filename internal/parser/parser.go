@@ -67,6 +67,7 @@ var stopWords = map[string]struct{}{
 	"ОРГАНИЗАЦИЯ": {}, "ПРОФЕССИОНАЛЬНАЯ": {}, "КОЛЛЕКТОРСКАЯ": {},
 	"НЕПУБЛИЧНОЕ": {}, "КЛИЕНТСКОЕ": {}, "БЮРО": {}, "ПЕРВОЕ": {},
 	"СЕРВИС": {}, "ЦЕНТР": {}, "РЕСУРС": {}, "ПРОЕКТ": {},
+	"ТГК": {}, "ГЕНЕРИРУЮЩАЯ": {}, "ТЕРРИТОРИАЛЬНАЯ": {},
 }
 
 func bondKeywords(b *domain.Bond) map[string]struct{} {
@@ -87,13 +88,13 @@ func bondKeywords(b *domain.Bond) map[string]struct{} {
 	}
 	if b.Name != "" {
 		parts[strings.ToUpper(b.Name)] = struct{}{}
-		for _, w := range regexp.MustCompile(`[^\p{L}\p{N}]+`).Split(b.Name, -1) {
+		for _, w := range regexp.MustCompile(`[^\p{L}\p{N}\-]+`).Split(b.Name, -1) {
 			add(w)
 		}
 	}
 	if b.Issuer != nil && *b.Issuer != "" {
 		parts[strings.ToUpper(*b.Issuer)] = struct{}{}
-		for _, w := range regexp.MustCompile(`[^\p{L}\p{N}]+`).Split(*b.Issuer, -1) {
+		for _, w := range regexp.MustCompile(`[^\p{L}\p{N}\-]+`).Split(*b.Issuer, -1) {
 			add(w)
 		}
 	}
@@ -101,7 +102,7 @@ func bondKeywords(b *domain.Bond) map[string]struct{} {
 }
 
 func textMatches(text string, kw map[string]struct{}) bool {
-	for _, word := range regexp.MustCompile(`[^\p{L}\p{N}]+`).Split(text, -1) {
+	for _, word := range regexp.MustCompile(`[^\p{L}\p{N}\-]+`).Split(text, -1) {
 		if len(word) >= 3 {
 			if _, ok := kw[strings.ToUpper(word)]; ok {
 				return true
