@@ -1,0 +1,1 @@
+ALTER TABLE news ALTER COLUMN sentiment_reason TYPE VARCHAR(500);

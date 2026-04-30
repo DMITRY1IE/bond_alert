@@ -33,15 +33,25 @@ func New(apiKey, baseURL, model string) *Client {
 
 func prompt(news string) string {
 	body := news
-	if len(body) > 1500 {
-		body = body[:1500]
+	if len(body) > 2000 {
+		body = body[:2000]
 	}
-	return fmt.Sprintf(`Ты финансовый аналитик. Определи сентимент новости об облигациях.
+	return fmt.Sprintf(`Ты — старший аналитик по долговому рынку в инвестиционном банке. Твоя задача — оценить влияние новости на стоимость и риск облигаций данного эмитента.
 
 Новость: %s
 
-Ответь ТОЛЬКО в формате JSON, без лишнего текста:
-{"sentiment": "POSITIVE|NEGATIVE|NEUTRAL", "reason": "пояснение до 15 слов"}`, body)
+Проанализируй новость как профессиональный аналитик и ответь ТОЛЬКО в формате JSON:
+{
+  "sentiment": "POSITIVE|NEGATIVE|NEUTRAL",
+  "reason": "чёткое объяснение в 2-3 предложения почему такой сентимент, с указанием ключевых факторов"
+}
+
+Критерии оценки:
+- POSITIVE: новости, которые могут повысить стоимость облигаций (рост прибыли, улучшение кредитного качества, снижение рисков, позитивные корпоративные события)
+- NEGATIVE: новости, которые могут снизить стоимость облигаций (убытки, ухудшение финансового состояния, дефолты, реструктуризация, судебные иски, regulatory риски)
+- NEUTRAL: рутинные корпоративные новости, отчетность без существенных изменений, технические события
+
+В объяснении укажи конкретные цифры или факты из новости, влияющие на оценку.`, body)
 }
 
 var jsonObj = regexp.MustCompile(`\{[\s\S]*\}`)
@@ -119,17 +129,16 @@ func (c *Client) AnalyzeSentiment(ctx context.Context, newsText string) (sentime
 		s = "NEUTRAL"
 	}
 	rs := fmt.Sprint(data["reason"])
-	if len(rs) > 255 {
-		rs = rs[:255]
+	if len(rs) > 500 {
+		rs = rs[:497] + "..."
 	}
 	return s, rs, nil
 }
 
-// AnalyzeSentimentOrNeutral never fails from caller perspective for pipeline.
 func (c *Client) AnalyzeSentimentOrNeutral(ctx context.Context, newsText string) (sentiment, reason string) {
 	s, r, err := c.AnalyzeSentiment(ctx, newsText)
 	if err != nil {
-		return "NEUTRAL", "Не удалось проанализировать; показан нейтральный сентимент."
+		return "NEUTRAL", "Техническая ошибка анализа. Новость требует ручной оценки."
 	}
 	return s, r
 }
