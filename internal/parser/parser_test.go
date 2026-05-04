@@ -229,6 +229,44 @@ func TestTGK14(t *testing.T) {
 	}
 }
 
+func TestABZ1FalseMatch(t *testing.T) {
+	bond := &domain.Bond{
+		ISIN:   "RU000A10BNM4",
+		Name:   "АБЗ-1 2Р03",
+		Issuer: strPtr("Акционерное общество \"Асфальтобетонный завод №1\""),
+	}
+	kw := bondKeywords(bond)
+
+	news := "Транснефть оспаривает в апелляции повторный отказ во взыскании ₽584 млн штрафа с ООО «Ри-инвест» (Тюменский НПЗ, бывший Антипинский завод) за несданные в 2022 году объёмы нефтепродуктов из-за пожара"
+	if textMatches(news, kw) {
+		t.Errorf("News should NOT match for ABZ-1: %q", news)
+	}
+
+	news2 := "Асфальтобетонный завод №1 увеличил выпуск"
+	if !textMatches(news2, kw) {
+		t.Errorf("News SHOULD match for ABZ-1: %q", news2)
+	}
+}
+
+func TestGTLKFalseMatch(t *testing.T) {
+	bond := &domain.Bond{
+		ISIN:   "RU000A10A3Z4",
+		Name:   "ГТЛК 2P-04",
+		Issuer: strPtr("акционерное общество \"Государственная транспортная лизинговая компания\""),
+	}
+	kw := bondKeywords(bond)
+
+	news := "Представитель держателей облигаций ТК «Нафтатранс плюс» (ООО «ЮЛКМ») подал иск о взыскании с эмитента и связанной компании «Спецтранскомпани» задолженности"
+	if textMatches(news, kw) {
+		t.Errorf("News should NOT match for GTLK: %q", news)
+	}
+
+	news2 := "Государственная транспортная лизинговая компания объявила о выпуске"
+	if !textMatches(news2, kw) {
+		t.Errorf("News SHOULD match for GTLK: %q", news2)
+	}
+}
+
 func strPtr(s string) *string {
 	return &s
 }
