@@ -64,50 +64,77 @@ var stopWords = map[string]struct{}{
 	"ИНВЕСТ": {}, "ИНВЕСТИЦИИ": {}, "КАПИТАЛ": {}, "ФИНАНС": {},
 	"ТРЕЙДИНГ": {}, "ТРЕЙД": {}, "ТОРГОВЫЙ": {}, "ДОМ": {},
 	"ДЖИ": {}, "ГР": {},
+	"НОВЫЙ": {}, "НОВАЯ": {}, "НОВОЕ": {}, "НОВЫЕ": {}, "НОВЫХ": {}, "НОВОГО": {}, "НОВОМ": {}, "НОВОЙ": {}, "НОВОМУ": {}, "НОВУЮ": {},
 	"ОРГАНИЗАЦИЯ": {}, "ПРОФЕССИОНАЛЬНАЯ": {}, "КОЛЛЕКТОРСКАЯ": {},
 	"НЕПУБЛИЧНОЕ": {}, "КЛИЕНТСКОЕ": {}, "БЮРО": {}, "ПЕРВОЕ": {},
 	"СЕРВИС": {}, "ЦЕНТР": {}, "РЕСУРС": {}, "ПРОЕКТ": {},
 	"ТГК": {}, "ГЕНЕРИРУЮЩАЯ": {}, "ТЕРРИТОРИАЛЬНАЯ": {},
 }
 
-func bondKeywords(b *domain.Bond) map[string]struct{} {
-	parts := make(map[string]struct{})
-	add := func(s string) {
+type bondMatch struct {
+	exact    map[string]struct{}
+	keywords map[string]struct{}
+}
+
+func bondKeywords(b *domain.Bond) bondMatch {
+	exact := make(map[string]struct{})
+	kw := make(map[string]struct{})
+	addExact := func(s string) {
+		s = strings.ToUpper(strings.TrimSpace(s))
+		if len(s) >= 3 {
+			exact[s] = struct{}{}
+		}
+	}
+	addWord := func(s string) {
 		s = strings.TrimSpace(s)
 		if len(s) >= 3 {
 			if _, stop := stopWords[strings.ToUpper(s)]; !stop {
-				parts[strings.ToUpper(s)] = struct{}{}
+				kw[strings.ToUpper(s)] = struct{}{}
 			}
 		}
 	}
 	if b.ISIN != "" {
-		add(b.ISIN)
+		addExact(b.ISIN)
 	}
 	if b.Ticker != nil && *b.Ticker != "" {
-		add(*b.Ticker)
+		addExact(*b.Ticker)
 	}
 	if b.Name != "" {
-		parts[strings.ToUpper(b.Name)] = struct{}{}
+		addExact(b.Name)
 		for _, w := range regexp.MustCompile(`[^\p{L}\p{N}\-]+`).Split(b.Name, -1) {
-			add(w)
+			addWord(w)
 		}
 	}
 	if b.Issuer != nil && *b.Issuer != "" {
-		parts[strings.ToUpper(*b.Issuer)] = struct{}{}
 		for _, w := range regexp.MustCompile(`[^\p{L}\p{N}\-]+`).Split(*b.Issuer, -1) {
-			add(w)
+			addWord(w)
 		}
 	}
-	return parts
+	return bondMatch{exact: exact, keywords: kw}
 }
 
-func textMatches(text string, kw map[string]struct{}) bool {
-	for _, word := range regexp.MustCompile(`[^\p{L}\p{N}\-]+`).Split(text, -1) {
+func textMatches(text string, bm bondMatch) bool {
+	upper := strings.ToUpper(text)
+	for ex := range bm.exact {
+		if strings.Contains(upper, ex) {
+			return true
+		}
+	}
+	matches := 0
+	var lastMatch string
+	for _, word := range regexp.MustCompile(`[^\p{L}\p{N}\-]+`).Split(upper, -1) {
 		if len(word) >= 3 {
-			if _, ok := kw[strings.ToUpper(word)]; ok {
-				return true
+			if _, ok := bm.keywords[word]; ok {
+				matches++
+				lastMatch = word
 			}
 		}
+	}
+	if matches >= 2 {
+		return true
+	}
+	if matches == 1 && len(lastMatch) >= 5 {
+		return true
 	}
 	return false
 }
@@ -256,7 +283,7 @@ func ParseSmartLab(ctx context.Context, client *http.Client, ua string, b *domai
 			}
 			block := strings.TrimSpace(h.Next().Text())
 			blob := title + " " + block
-			if len(kw) > 0 && !textMatches(blob, kw) {
+			if (len(kw.exact) > 0 || len(kw.keywords) > 0) && !textMatches(blob, kw) {
 				return
 			}
 			seen[full] = struct{}{}
@@ -286,7 +313,7 @@ func ParseSmartLab(ctx context.Context, client *http.Client, ua string, b *domai
 			if p := s.Parent(); p != nil && p.Length() > 0 {
 				blob = strings.TrimSpace(p.Text())
 			}
-			if len(kw) > 0 && !textMatches(blob, kw) {
+			if (len(kw.exact) > 0 || len(kw.keywords) > 0) && !textMatches(blob, kw) {
 				return
 			}
 			seen[full] = struct{}{}
@@ -440,7 +467,7 @@ func ParseFinamRSS(ctx context.Context, client *http.Client, ua string, b *domai
 		desc := stripHTML(item.Description)
 		blob := title + " " + desc
 		matched := textMatches(blob, kw)
-		if len(kw) > 0 && !matched {
+		if (len(kw.exact) > 0 || len(kw.keywords) > 0) && !matched {
 			continue
 		}
 		seen[link] = struct{}{}

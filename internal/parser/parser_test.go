@@ -12,10 +12,12 @@ import (
 )
 
 func TestTextMatches(t *testing.T) {
-	kw := map[string]struct{}{
-		"ЭТАЛОН-ФИНАНС": {},
-		"ЭТАЛОНФИН5":   {},
+	bond := &domain.Bond{
+		ISIN:   "RU000A10EST2",
+		Name:   "ЭталонФин5",
+		Issuer: strPtr("Акционерное общество \"Эталон-Финанс\""),
 	}
+	kw := bondKeywords(bond)
 
 	tests := []struct {
 		text     string
@@ -26,7 +28,36 @@ func TestTextMatches(t *testing.T) {
 		{"ЭТАЛОНФИН5 - новая облигация", true},
 		{"финансовые новости", false},
 		{"АО Эталон-Финанс", true},
-		{"АО Эталон-Финанс", true},
+		{"RU000A10EST2", true},
+	}
+
+	for _, tt := range tests {
+		result := textMatches(tt.text, kw)
+		if result != tt.expected {
+			t.Errorf("textMatches(%q) = %v, want %v", tt.text, result, tt.expected)
+		}
+	}
+}
+
+func TestTextMatchesMultipleWords(t *testing.T) {
+	bond := &domain.Bond{
+		ISIN:   "RU000A10AHE5",
+		Name:   "НовТех1Р2",
+		Issuer: strPtr("Общество с ограниченной ответственностью \"Новые технологии\""),
+	}
+	kw := bondKeywords(bond)
+
+	tests := []struct {
+		text     string
+		expected bool
+	}{
+		{"НовТех1Р2 получил кредит", true},
+		{"новых технологий в России", false},
+		{"НовТех1Р2 - новая облигация", true},
+		{"RU000A10AHE5", true},
+		{"Крупнейшие ритейлеры запустили 418 новых СТМ", false},
+		{"В России растет средний срок автокредитов", false},
+		{"технологии технологии развиваются", true},
 	}
 
 	for _, tt := range tests {
@@ -113,15 +144,13 @@ func TestParseFinamRSS(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			kw := bondKeywords(tt.bond)
-			t.Logf("Keywords: %v (len=%d)", kw, len(kw))
-
 			items, err := ParseFinamRSS(context.Background(), client, ua, tt.bond)
 			if err != nil {
 				t.Fatalf("ParseFinamRSS error: %v", err)
 			}
 
 			if tt.expected >= 0 && len(items) != tt.expected {
+				kw := bondKeywords(tt.bond)
 				t.Errorf("Expected %d items, got %d", tt.expected, len(items))
 				for _, item := range items {
 					blob := item.Title + " " + item.Summary
@@ -135,11 +164,14 @@ func TestParseFinamRSS(t *testing.T) {
 	}
 }
 
-func extractMatchedWords(text string, kw map[string]struct{}) []string {
+func extractMatchedWords(text string, kw bondMatch) []string {
 	var found []string
-	for _, word := range regexp.MustCompile(`[^\p{L}\p{N}]+`).Split(text, -1) {
+	for _, word := range regexp.MustCompile(`[^\p{L}\p{N}]+`).Split(strings.ToUpper(text), -1) {
 		if len(word) >= 3 {
-			if _, ok := kw[strings.ToUpper(word)]; ok {
+			if _, ok := kw.exact[word]; ok {
+				found = append(found, word+"(exact)")
+			}
+			if _, ok := kw.keywords[word]; ok {
 				found = append(found, word)
 			}
 		}
@@ -155,7 +187,6 @@ func TestSmartLabSellService(t *testing.T) {
 	}
 
 	kw := bondKeywords(bond)
-	t.Logf("Keywords: %v (len=%d)", kw, len(kw))
 
 	news := "Государство в 2025 г. выделило VK более 43,5 млрд руб"
 	if textMatches(news, kw) {
@@ -171,7 +202,6 @@ func TestSmartLabPKB(t *testing.T) {
 	}
 
 	kw := bondKeywords(bond)
-	t.Logf("Keywords: %v (len=%d)", kw, len(kw))
 
 	news := "ВВП России в I кв. 2026 г. снизился на 0,3%"
 	if textMatches(news, kw) {
@@ -187,7 +217,6 @@ func TestTGK14(t *testing.T) {
 	}
 
 	kw := bondKeywords(bond)
-	t.Logf("Keywords: %v (len=%d)", kw, len(kw))
 
 	news := "ТГК-1 не будет публиковать отчетность по РСБУ за 1кв 2026г"
 	if textMatches(news, kw) {
