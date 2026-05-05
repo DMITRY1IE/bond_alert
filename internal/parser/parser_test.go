@@ -267,6 +267,25 @@ func TestGTLKFalseMatch(t *testing.T) {
 	}
 }
 
+func TestGrupProBFalseMatch(t *testing.T) {
+	bond := &domain.Bond{
+		ISIN:   "RU000A10DPJ1",
+		Name:   "ГрупПроБ02",
+		Issuer: strPtr("Общество с ограниченной ответственностью \"Группа \"Продовольствие\""),
+	}
+	kw := bondKeywords(bond)
+
+	news := "Выплаты купонов по облигациям ГК \"Самолет\" прошли с задержкой. ПАО \"ГК \"Самолет\" перевела платеж по купону"
+	if textMatches(news, kw) {
+		t.Errorf("News should NOT match for GrupProB: %q", news)
+	}
+
+	news2 := "Группа Продовольствие увеличила выручку"
+	if !textMatches(news2, kw) {
+		t.Errorf("News SHOULD match for GrupProB: %q", news2)
+	}
+}
+
 func strPtr(s string) *string {
 	return &s
 }

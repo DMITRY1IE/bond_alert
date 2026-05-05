@@ -90,9 +90,15 @@ func bondKeywords(b *domain.Bond) bondMatch {
 	kw := make(map[string]struct{})
 	addExact := func(s string) {
 		s = strings.ToUpper(strings.TrimSpace(s))
-		if len(s) >= 3 {
-			exact[s] = struct{}{}
+		if len(s) < 3 {
+			return
 		}
+		if !strings.Contains(s, " ") {
+			if _, stop := stopWords[s]; stop {
+				return
+			}
+		}
+		exact[s] = struct{}{}
 	}
 	addWord := func(s string) {
 		s = strings.TrimSpace(s)
@@ -115,17 +121,35 @@ func bondKeywords(b *domain.Bond) bondMatch {
 		}
 	}
 	if b.Issuer != nil && *b.Issuer != "" {
-		for _, m := range quotedNameRe.FindAllStringSubmatch(*b.Issuer, -1) {
-			quoted := strings.TrimSpace(m[1])
-			if len(quoted) >= 3 {
-				addExact(quoted)
-			}
+		fullQuoted := extractFullQuoted(*b.Issuer)
+		if fullQuoted != "" {
+			addExact(fullQuoted)
 		}
 		for _, w := range regexp.MustCompile(`[^\p{L}\p{N}\-]+`).Split(*b.Issuer, -1) {
 			addWord(w)
 		}
 	}
 	return bondMatch{exact: exact, keywords: kw}
+}
+
+func extractFullQuoted(s string) string {
+	first := strings.IndexAny(s, "\"\u00AB\u201C\u201E")
+	if first < 0 {
+		return ""
+	}
+	last := strings.LastIndexAny(s, "\"\u00BB\u201D\u201F")
+	if last <= first {
+		return ""
+	}
+	inner := s[first+1 : last]
+	inner = strings.NewReplacer(
+		"\u00AB", " ", "\u00BB", " ",
+		"\u201C", " ", "\u201D", " ",
+		"\u201E", " ", "\u201F", " ",
+		"\"", " ",
+	).Replace(inner)
+	inner = strings.TrimSpace(inner)
+	return inner
 }
 
 func textMatches(text string, bm bondMatch) bool {
@@ -512,8 +536,6 @@ func stripHTML(s string) string {
 }
 
 var htmlEntityRe = regexp.MustCompile(`&[a-zA-Z]+;`)
-
-var quotedNameRe = regexp.MustCompile(`["\x{00AB}\x{201C}\x{201E}]([^"\x{00BB}\x{201D}\x{201F}]+)["\x{00BB}\x{201D}\x{201F}]`)
 
 func parseRSSDate(s string) *time.Time {
 	layouts := []string{
