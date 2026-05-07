@@ -124,9 +124,10 @@ func bondKeywords(b *domain.Bond) bondMatch {
 		fullQuoted := extractFullQuoted(*b.Issuer)
 		if fullQuoted != "" {
 			addExact(fullQuoted)
-		}
-		for _, w := range regexp.MustCompile(`[^\p{L}\p{N}\-]+`).Split(*b.Issuer, -1) {
-			addWord(w)
+		} else {
+			for _, w := range regexp.MustCompile(`[^\p{L}\p{N}\-]+`).Split(*b.Issuer, -1) {
+				addWord(w)
+			}
 		}
 	}
 	return bondMatch{exact: exact, keywords: kw}
@@ -149,6 +150,7 @@ func extractFullQuoted(s string) string {
 		"\"", " ",
 	).Replace(inner)
 	inner = strings.TrimSpace(inner)
+	inner = strings.Join(strings.Fields(inner), " ")
 	return inner
 }
 

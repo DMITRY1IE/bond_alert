@@ -57,7 +57,7 @@ func TestTextMatchesMultipleWords(t *testing.T) {
 		{"RU000A10AHE5", true},
 		{"Крупнейшие ритейлеры запустили 418 новых СТМ", false},
 		{"В России растет средний срок автокредитов", false},
-		{"технологии технологии развиваются", true},
+		{"Новые технологии увеличили прибыль", true},
 	}
 
 	for _, tt := range tests {
@@ -283,6 +283,49 @@ func TestGrupProBFalseMatch(t *testing.T) {
 	news2 := "Группа Продовольствие увеличила выручку"
 	if !textMatches(news2, kw) {
 		t.Errorf("News SHOULD match for GrupProB: %q", news2)
+	}
+}
+
+func TestNSKATDFalseMatch(t *testing.T) {
+	bond := &domain.Bond{
+		ISIN:   "RU000A10B461",
+		Name:   "NSKATD-03",
+		Issuer: strPtr("Акционерное общество по строительству, ремонту и содержанию автомобильных дорог и инженерных сооружений \"Новосибирскавтодор\""),
+	}
+	kw := bondKeywords(bond)
+
+	news := "Крупнейшая ГМК Украины \"АрселорМиттал Кривой Рог\" сообщила об остановке производственных мощностей из-за сбоев в предоставлении логистических услуг со стороны железных дорог Украины"
+	if textMatches(news, kw) {
+		t.Errorf("News should NOT match for NSKATD: %q", news)
+	}
+
+	news2 := "Северсталь запатентовала конструкцию тоннеля мелкого заложения для строительства путепроводов под действующими магистралями"
+	if textMatches(news2, kw) {
+		t.Errorf("News should NOT match for NSKATD: %q", news2)
+	}
+
+	news3 := "Новосибирскавтодор получил контракт на ремонт дорог"
+	if !textMatches(news3, kw) {
+		t.Errorf("News SHOULD match for NSKATD: %q", news3)
+	}
+
+	news4 := "NSKATD-03 выплата купона"
+	if !textMatches(news4, kw) {
+		t.Errorf("News SHOULD match for NSKATD (by name): %q", news4)
+	}
+}
+
+func TestIssuerNoQuotes(t *testing.T) {
+	bond := &domain.Bond{
+		ISIN:   "RU000A0JWUE9",
+		Name:   "ВТБ Банк",
+		Issuer: strPtr("ВТБ"),
+	}
+	kw := bondKeywords(bond)
+
+	news := "ВТБ увеличил прибыль"
+	if !textMatches(news, kw) {
+		t.Errorf("News SHOULD match for VTB: %q", news)
 	}
 }
 
