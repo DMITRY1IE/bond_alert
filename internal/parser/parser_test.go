@@ -329,6 +329,54 @@ func TestIssuerNoQuotes(t *testing.T) {
 	}
 }
 
+func TestTomskAdmFalseMatch(t *testing.T) {
+	bond := &domain.Bond{
+		ISIN:   "RU000A10A6J1",
+		Name:   "ТомскАдм 9",
+		Issuer: strPtr("Администрация Города Томска"),
+	}
+	kw := bondKeywords(bond)
+
+	news := "Пожар на промплощадке Северстали в Череповце площадью 300 кв м ликвидирован — мэр города Накрошаев"
+	if textMatches(news, kw) {
+		t.Errorf("News should NOT match for TomskAdm: %q", news)
+	}
+
+	news2 := "Администрация города Томска объявила тендер"
+	if !textMatches(news2, kw) {
+		t.Errorf("News SHOULD match for TomskAdm: %q", news2)
+	}
+
+	news3 := "ТомскАдм 9 выплата купона"
+	if !textMatches(news3, kw) {
+		t.Errorf("News SHOULD match for TomskAdm (by name): %q", news3)
+	}
+}
+
+func TestStranaFalseMatch(t *testing.T) {
+	bond := &domain.Bond{
+		ISIN:   "RU000A10BP46",
+		Name:   "Страна 03",
+		Issuer: strPtr("Общество с ограниченной ответственностью \"Элит Строй\""),
+	}
+	kw := bondKeywords(bond)
+
+	news := "Пашинян: Армения не будет проводить референдум, страна остаётся полноценным членом ЕАЭС"
+	if textMatches(news, kw) {
+		t.Errorf("News should NOT match for Strana: %q", news)
+	}
+
+	news2 := "Страна 03 выплатила купон"
+	if !textMatches(news2, kw) {
+		t.Errorf("News SHOULD match for Strana (by name): %q", news2)
+	}
+
+	news3 := "Элит Строй получил кредит"
+	if !textMatches(news3, kw) {
+		t.Errorf("News SHOULD match for Strana (by issuer): %q", news3)
+	}
+}
+
 func strPtr(s string) *string {
 	return &s
 }
