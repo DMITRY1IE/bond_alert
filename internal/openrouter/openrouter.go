@@ -32,27 +32,38 @@ func New(apiKey, baseURL, model string) *Client {
 	}
 }
 
-func prompt(news string) string {
+func prompt(news, bondName, issuer string) string {
 	body := news
 	if len(body) > 2000 {
 		body = body[:2000]
 	}
-	return fmt.Sprintf(`Ты — старший аналитик по долговому рынку в инвестиционном банке. Твоя задача — оценить влияние новости на стоимость и риск облигаций данного эмитента.
+	issuerLine := ""
+	if issuer != "" {
+		issuerLine = fmt.Sprintf("\nЭмитент: %s", issuer)
+	}
+	bondLine := ""
+	if bondName != "" {
+		bondLine = fmt.Sprintf("\nОблигация: %s", bondName)
+	}
+	return fmt.Sprintf(`Ты — старший аналитик по долговому рынке в инвестиционном банке. Твоя задача — определить, относится ли новость к данному эмитенту, и если да — оценить влияние на стоимость и риск его облигаций.%s%s
 
 Новость: %s
 
-Проанализируй новость как профессиональный аналитик и ответь ТОЛЬКО в формате JSON:
+Проанализируй новость и ответь ТОЛЬКО в формате JSON:
 {
-  "sentiment": "POSITIVE|NEGATIVE|NEUTRAL",
-  "reason": "чёткое объяснение в 2-3 предложения почему такой сентимент, с указанием ключевых факторов"
+  "sentiment": "POSITIVE|NEGATIVE|NEUTRAL|NOT_RELATED",
+  "reason": "чёткое объяснение в 2-3 предложения"
 }
 
 Критерии оценки:
+- NOT_RELATED: новость НЕ имеет прямого отношения к данному эмитенту или его облигациям (упоминание схожих слов, сектора в целом, других компаний)
 - POSITIVE: новости, которые могут повысить стоимость облигаций (рост прибыли, улучшение кредитного качества, снижение рисков, позитивные корпоративные события)
 - NEGATIVE: новости, которые могут снизить стоимость облигаций (убытки, ухудшение финансового состояния, дефолты, реструктуризация, судебные иски, regulatory риски)
 - NEUTRAL: рутинные корпоративные новости, отчетность без существенных изменений, технические события
 
-В объяснении укажи конкретные цифры или факты из новости, влияющие на оценку.`, body)
+ВАЖНО: если новость не относится конкретно к этому эмитенту — отвечай NOT_RELATED. Общиерыночные или макроэкономические новости, упоминание отрасли без привязки к эмитенту — это NOT_RELATED.
+
+В объяснении укажи конкретные цифры или факты из новости, влияющие на оценку.`, issuerLine, bondLine, body)
 }
 
 var jsonObj = regexp.MustCompile(`\{[\s\S]*\}`)
@@ -84,7 +95,7 @@ type chatResp struct {
 	} `json:"choices"`
 }
 
-func (c *Client) AnalyzeSentiment(ctx context.Context, newsText string) (sentiment string, reason string, err error) {
+func (c *Client) AnalyzeSentiment(ctx context.Context, newsText, bondName, issuer string) (sentiment string, reason string, err error) {
 	if strings.TrimSpace(c.APIKey) == "" {
 		return "NEUTRAL", "OPENROUTER_API_KEY не задан.", fmt.Errorf("missing OPENROUTER_API_KEY")
 	}
@@ -92,7 +103,7 @@ func (c *Client) AnalyzeSentiment(ctx context.Context, newsText string) (sentime
 	body, _ := json.Marshal(chatReq{
 		Model: c.Model,
 		Messages: []map[string]string{
-			{"role": "user", "content": prompt(newsText)},
+			{"role": "user", "content": prompt(newsText, bondName, issuer)},
 		},
 		Temperature: 0.3,
 	})
@@ -126,7 +137,8 @@ func (c *Client) AnalyzeSentiment(ctx context.Context, newsText string) (sentime
 		return "NEUTRAL", "", err
 	}
 	s := strings.ToUpper(fmt.Sprint(data["sentiment"]))
-	if s != "POSITIVE" && s != "NEUTRAL" && s != "NEGATIVE" {
+	validSents := map[string]bool{"POSITIVE": true, "NEGATIVE": true, "NEUTRAL": true, "NOT_RELATED": true}
+	if !validSents[s] {
 		s = "NEUTRAL"
 	}
 	rs := fmt.Sprint(data["reason"])
@@ -136,8 +148,8 @@ func (c *Client) AnalyzeSentiment(ctx context.Context, newsText string) (sentime
 	return s, rs, nil
 }
 
-func (c *Client) AnalyzeSentimentOrNeutral(ctx context.Context, newsText string) (sentiment, reason string) {
-	s, r, err := c.AnalyzeSentiment(ctx, newsText)
+func (c *Client) AnalyzeSentimentOrNeutral(ctx context.Context, newsText, bondName, issuer string) (sentiment, reason string) {
+	s, r, err := c.AnalyzeSentiment(ctx, newsText, bondName, issuer)
 	if err != nil {
 		log.Printf("AnalyzeSentiment error: %v", err)
 		return fallbackSentiment(newsText)

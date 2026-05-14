@@ -35,6 +35,8 @@ type rssItem struct {
 	PubDate     string `xml:"pubDate"`
 }
 
+var wordRe = regexp.MustCompile(`[^\p{L}\p{N}\-]+`)
+
 var requestLimiter = time.NewTicker(100 * time.Millisecond)
 
 func waitForRateLimit() {
@@ -133,7 +135,7 @@ func bondKeywords(b *domain.Bond) bondMatch {
 	}
 	if b.Name != "" {
 		addExact(b.Name)
-		for _, w := range regexp.MustCompile(`[^\p{L}\p{N}\-]+`).Split(b.Name, -1) {
+		for _, w := range wordRe.Split(b.Name, -1) {
 			addWord(w)
 		}
 	}
@@ -142,7 +144,7 @@ func bondKeywords(b *domain.Bond) bondMatch {
 		if fullQuoted != "" {
 			addExact(fullQuoted)
 		} else {
-			for _, w := range regexp.MustCompile(`[^\p{L}\p{N}\-]+`).Split(*b.Issuer, -1) {
+			for _, w := range wordRe.Split(*b.Issuer, -1) {
 				addWord(w)
 			}
 		}
@@ -174,13 +176,29 @@ func extractFullQuoted(s string) string {
 func textMatches(text string, bm bondMatch) bool {
 	upper := strings.ToUpper(text)
 	for ex := range bm.exact {
-		if strings.Contains(upper, ex) {
-			return true
+		if strings.Contains(ex, " ") {
+			if strings.Contains(upper, ex) {
+				return true
+			}
+		}
+	}
+	words := wordRe.Split(upper, -1)
+	wordSet := make(map[string]struct{}, len(words))
+	for _, w := range words {
+		if len(w) >= 2 {
+			wordSet[w] = struct{}{}
+		}
+	}
+	for ex := range bm.exact {
+		if !strings.Contains(ex, " ") {
+			if _, ok := wordSet[ex]; ok {
+				return true
+			}
 		}
 	}
 	matches := 0
 	var lastMatch string
-	for _, word := range regexp.MustCompile(`[^\p{L}\p{N}\-]+`).Split(upper, -1) {
+	for _, word := range words {
 		if len(word) >= 3 {
 			if _, ok := bm.keywords[word]; ok {
 				matches++

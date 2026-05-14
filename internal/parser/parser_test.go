@@ -377,6 +377,44 @@ func TestStranaFalseMatch(t *testing.T) {
 	}
 }
 
+func TestVUSHFalseMatch(t *testing.T) {
+	bond := &domain.Bond{
+		ISIN:   "RU000A10BS76",
+		Name:   "iВУШ 1P4",
+		Issuer: strPtr("Общество с ограниченной ответственностью \"ВУШ\""),
+	}
+	kw := bondKeywords(bond)
+
+	news := "Си Цзиньпин: мир сталкивается с глубокими переменами, поэтому от работы США и Китая зависит, смогут ли они преодолеть ловушку Фукидида и создать новую парадигму отношений между крупными державами"
+	if textMatches(news, kw) {
+		t.Errorf("News should NOT match for ВУШ (ловушка ≠ ВУШ): %q", news)
+	}
+
+	news2 := "ООО ВУШ объявило о выплате купона"
+	if !textMatches(news2, kw) {
+		t.Errorf("News SHOULD match for ВУШ: %q", news2)
+	}
+}
+
+func TestRestorFalseMatch(t *testing.T) {
+	bond := &domain.Bond{
+		ISIN:   "RU000A10DMN0",
+		Name:   "реСтор1Р2",
+		Issuer: strPtr("Общество с ограниченной ответственностью \"реСтор\""),
+	}
+	kw := bondKeywords(bond)
+
+	news := "В условиях роста издержек на логистику и снижение вылова рестораны стали закупать креветки, кальмары, мидии, а также лососевых рыб по более высоким ценам"
+	if textMatches(news, kw) {
+		t.Errorf("News should NOT match for реСтор (рестораны ≠ реСтор): %q", news)
+	}
+
+	news2 := "реСтор увеличил выручку"
+	if !textMatches(news2, kw) {
+		t.Errorf("News SHOULD match for реСтор: %q", news2)
+	}
+}
+
 func strPtr(s string) *string {
 	return &s
 }

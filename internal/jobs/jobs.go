@@ -54,7 +54,14 @@ func processBond(ctx context.Context, cfg *config.Config, st *store.Store, or *o
 			body = parser.FetchArticleBody(ctx, client, cfg.UserAgent, it.URL, 1000)
 		}
 		llmIn := it.Title + "\n\n" + body
-		sent, reason := or.AnalyzeSentimentOrNeutral(ctx, llmIn)
+		issuer := ""
+		if b.Issuer != nil {
+			issuer = *b.Issuer
+		}
+		sent, reason := or.AnalyzeSentimentOrNeutral(ctx, llmIn, b.Name, issuer)
+		if sent == "NOT_RELATED" {
+			continue
+		}
 		pub := it.PublishedAt
 		analyzed := time.Now().UTC()
 		id, err := st.InsertNews(ctx, b.ID, it.Title, truncate(body, 1000), it.URL, it.Source, pub, sent, reason, analyzed)
