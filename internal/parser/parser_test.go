@@ -413,6 +413,11 @@ func TestRestorFalseMatch(t *testing.T) {
 	if !textMatches(news2, kw) {
 		t.Errorf("News SHOULD match for реСтор: %q", news2)
 	}
+
+	news3 := "Ритейл и рестораны выступили против квотирования российского вина на полках"
+	if textMatches(news3, kw) {
+		t.Errorf("News should NOT match for реСтор (рестораны ≠ реСтор): %q", news3)
+	}
 }
 
 func strPtr(s string) *string {
