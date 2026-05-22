@@ -37,6 +37,8 @@ type rssItem struct {
 
 var wordRe = regexp.MustCompile(`[^\p{L}\p{N}\-]+`)
 
+var bondSeriesRe = regexp.MustCompile(`(?i)^(?:БО-\d+|\d[РP]-?\d+)$`)
+
 var requestLimiter = time.NewTicker(100 * time.Millisecond)
 
 func waitForRateLimit() {
@@ -122,9 +124,14 @@ func bondKeywords(b *domain.Bond) bondMatch {
 	addWord := func(s string) {
 		s = strings.TrimSpace(s)
 		if len(s) >= 3 {
-			if _, stop := stopWords[strings.ToUpper(s)]; !stop {
-				kw[strings.ToUpper(s)] = struct{}{}
+			up := strings.ToUpper(s)
+			if _, stop := stopWords[up]; stop {
+				return
 			}
+			if bondSeriesRe.MatchString(s) {
+				return
+			}
+			kw[up] = struct{}{}
 		}
 	}
 	if b.ISIN != "" {

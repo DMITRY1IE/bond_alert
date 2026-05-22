@@ -420,6 +420,53 @@ func TestRestorFalseMatch(t *testing.T) {
 	}
 }
 
+func TestGTEKBondSeriesFalseMatch(t *testing.T) {
+	bond := &domain.Bond{
+		ISIN:   "RU000A10D3G1",
+		Name:   "ГТЕК БО-01",
+		Issuer: strPtr("Общество с ограниченной ответственностью \"Гельтек-Медика\""),
+	}
+	kw := bondKeywords(bond)
+
+	news := "Облигации «Омега» серии БО-01 резко упали в цене (-8,36%) на фоне риска банкротства"
+	if textMatches(news, kw) {
+		t.Errorf("News should NOT match for ГТЕК БО-01 (different issuer): %q", news)
+	}
+
+	news2 := "ГТЕК БО-01 выплатил купон"
+	if !textMatches(news2, kw) {
+		t.Errorf("News SHOULD match for ГТЕК БО-01: %q", news2)
+	}
+
+	news3 := "Гельтек-Медика увеличил прибыль"
+	if !textMatches(news3, kw) {
+		t.Errorf("News SHOULD match for ГТЕК (by issuer): %q", news3)
+	}
+}
+
+func TestBondSeriesSuffixFiltered(t *testing.T) {
+	tests := []struct {
+		word     string
+		filtered bool
+	}{
+		{"БО-01", true},
+		{"БО-02", true},
+		{"БО-99", true},
+		{"1Р2", true},
+		{"2P6", true},
+		{"1Р-07", true},
+		{"9P-12", true},
+		{"ГТЕК", false},
+		{"Эталон-Финанс", false},
+	}
+	for _, tt := range tests {
+		result := bondSeriesRe.MatchString(tt.word)
+		if result != tt.filtered {
+			t.Errorf("bondSeriesRe.MatchString(%q) = %v, want %v", tt.word, result, tt.filtered)
+		}
+	}
+}
+
 func strPtr(s string) *string {
 	return &s
 }
